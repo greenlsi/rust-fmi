@@ -409,3 +409,47 @@ fn se_multiclock_qualifiers_are_per_clock() {
 
     unsafe { <MultiClock as Fmi3Common>::fmi3_free_instance(inst) };
 }
+
+/// Las funciones no soportadas (FMU state y derivadas) deben devolver `fmi3Error`,
+/// NUNCA entrar en pánico.
+///
+/// Están exportadas como símbolos C, así que un pánico dentro cruzaría la frontera FFI
+/// y eso es **comportamiento indefinido**. El `derive` no declara
+/// `canGetAndSetFMUState`, de modo que un maestro conforme no las llamará — pero un
+/// test de conformidad, un importador defensivo o uno con un bug sí pueden. Este test
+/// existe para que nadie las vuelva a poner como `todo!()`.
+#[test]
+fn se_funciones_no_soportadas_devuelven_error_sin_panico() {
+    let inst = instantiate_se();
+    assert!(!inst.is_null());
+
+    let err = binding::fmi3Status_fmi3Error;
+    let mut estado: binding::fmi3FMUState = std::ptr::null_mut();
+    let mut tam: usize = 0;
+    let mut bytes = [0u8; 8];
+    let mut sens = [0.0f64; 1];
+    let (vr, seed) = ([1u32; 1], [1.0f64; 1]);
+
+    unsafe {
+        assert_eq!(<TrafficSE as Fmi3Common>::fmi3_get_fmu_state(inst, &mut estado), err);
+        assert_eq!(<TrafficSE as Fmi3Common>::fmi3_set_fmu_state(inst, estado), err);
+        assert_eq!(<TrafficSE as Fmi3Common>::fmi3_free_fmu_state(inst, &mut estado), err);
+        assert_eq!(
+            <TrafficSE as Fmi3Common>::fmi3_serialized_fmu_state_size(inst, estado, &mut tam), err);
+        assert_eq!(
+            <TrafficSE as Fmi3Common>::fmi3_serialize_fmu_state(
+                inst, estado, bytes.as_mut_ptr(), bytes.len()), err);
+        assert_eq!(
+            <TrafficSE as Fmi3Common>::fmi3_deserialize_fmu_state(
+                inst, bytes.as_ptr(), bytes.len(), &mut estado), err);
+        assert_eq!(
+            <TrafficSE as Fmi3Common>::fmi3_get_directional_derivative(
+                inst, vr.as_ptr(), 1, vr.as_ptr(), 1,
+                seed.as_ptr(), 1, sens.as_mut_ptr(), 1), err);
+        assert_eq!(
+            <TrafficSE as Fmi3Common>::fmi3_get_adjoint_derivative(
+                inst, vr.as_ptr(), 1, vr.as_ptr(), 1,
+                seed.as_ptr(), 1, sens.as_mut_ptr(), 1), err);
+        <TrafficSE as Fmi3Common>::fmi3_free_instance(inst);
+    }
+}

@@ -609,13 +609,28 @@ where
         }
     }
 
-    // FMU State functions
+    // ---------------------------------------------------------------------
+    // FMU State and derivative functions — NO SOPORTADAS, pero de forma segura.
+    //
+    // El `derive` no declara `canGetAndSetFMUState` ni `providesDirectionalDerivatives`
+    // en el modelDescription.xml, y en FMI 3.0 ausente equivale a `false`: un maestro
+    // conforme no debe llamarlas. Pero los símbolos C **están exportados**, así que un
+    // maestro defensivo, un test de conformidad o un importador con un bug pueden
+    // llamarlas igual.
+    //
+    // Antes eran `todo!()`, que hace `panic!` **a través de la frontera FFI**:
+    // comportamiento indefinido. Devolver `fmi3Error` es siempre correcto y es lo que
+    // el estándar espera de una capacidad no soportada. Mismo criterio que se aplicó a
+    // las funciones `set_interval_*` de los relojes (ver más abajo).
+    // ---------------------------------------------------------------------
+
     #[inline(always)]
     unsafe fn fmi3_get_fmu_state(
         _instance: binding::fmi3Instance,
         _fmu_state: *mut binding::fmi3FMUState,
     ) -> binding::fmi3Status {
-        todo!("FMU state not yet implemented");
+        eprintln!("FMI3: fmi3GetFMUState no soportada (canGetAndSetFMUState = false)");
+        binding::fmi3Status_fmi3Error
     }
 
     #[inline(always)]
@@ -623,7 +638,8 @@ where
         _instance: binding::fmi3Instance,
         _fmu_state: binding::fmi3FMUState,
     ) -> binding::fmi3Status {
-        todo!("FMU state not yet implemented");
+        eprintln!("FMI3: fmi3SetFMUState no soportada (canGetAndSetFMUState = false)");
+        binding::fmi3Status_fmi3Error
     }
 
     #[inline(always)]
@@ -631,7 +647,8 @@ where
         _instance: binding::fmi3Instance,
         _fmu_state: *mut binding::fmi3FMUState,
     ) -> binding::fmi3Status {
-        todo!("FMU state not yet implemented");
+        eprintln!("FMI3: fmi3FreeFMUState no soportada (canGetAndSetFMUState = false)");
+        binding::fmi3Status_fmi3Error
     }
 
     #[inline(always)]
@@ -640,7 +657,8 @@ where
         _fmu_state: binding::fmi3FMUState,
         _size: *mut usize,
     ) -> binding::fmi3Status {
-        todo!("FMU state not yet implemented");
+        eprintln!("FMI3: fmi3SerializedFMUStateSize no soportada");
+        binding::fmi3Status_fmi3Error
     }
 
     #[inline(always)]
@@ -650,7 +668,8 @@ where
         _serialized_state: *mut binding::fmi3Byte,
         _size: usize,
     ) -> binding::fmi3Status {
-        todo!("FMU state not yet implemented");
+        eprintln!("FMI3: fmi3SerializeFMUState no soportada");
+        binding::fmi3Status_fmi3Error
     }
 
     #[inline(always)]
@@ -660,10 +679,10 @@ where
         _size: usize,
         _fmu_state: *mut binding::fmi3FMUState,
     ) -> binding::fmi3Status {
-        todo!("FMU state not yet implemented");
+        eprintln!("FMI3: fmi3DeserializeFMUState no soportada");
+        binding::fmi3Status_fmi3Error
     }
 
-    // Derivative functions
     #[inline(always)]
     unsafe fn fmi3_get_directional_derivative(
         _instance: binding::fmi3Instance,
@@ -676,8 +695,8 @@ where
         _sensitivity: *mut binding::fmi3Float64,
         _n_sensitivity: usize,
     ) -> binding::fmi3Status {
-        //let _instance = checked_deref_me!(instance, Self);
-        todo!("Directional derivative not yet implemented");
+        eprintln!("FMI3: fmi3GetDirectionalDerivative no soportada");
+        binding::fmi3Status_fmi3Error
     }
 
     #[inline(always)]
@@ -692,8 +711,8 @@ where
         _sensitivity: *mut binding::fmi3Float64,
         _n_sensitivity: usize,
     ) -> binding::fmi3Status {
-        //let _instance = checked_deref_me!(instance, Self);
-        todo!("Adjoint derivative not yet implemented");
+        eprintln!("FMI3: fmi3GetAdjointDerivative no soportada");
+        binding::fmi3Status_fmi3Error
     }
 
     // Configuration mode functions
