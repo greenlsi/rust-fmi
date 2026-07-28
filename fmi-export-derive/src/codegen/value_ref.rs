@@ -1,136 +1,109 @@
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{ToTokens, format_ident, quote};
 
-use crate::{Model, model::FieldAttributeOuter};
-use fmi::fmi3::schema;
+use crate::Model;
+use crate::model::FieldAttributeOuter;
 
 use super::util;
 
-/// Generate the ValueRef enum
+/// Generates a `<StructName>ValueRef` enum: one variant per FMI variable, named after
+/// the field in PascalCase, with the value reference as the enum discriminant.
+///
+/// This lets a model author refer to a variable by **name** (`MyModelValueRef::Ta`)
+/// instead of hard-coding a magic value-reference number that depends on field order.
+///
+/// The value references are assigned with the **same rule** as [`super::model_impl`]'s
+/// metadata pass (`Time` = 0, then each `#[variable]` field in declaration order
+/// starting at 1), so the enum is guaranteed to match the value references in the
+/// generated `modelDescription.xml`.
+///
+/// # Limitation
+///
+/// Models with `#[child]` fields are skipped: the child's sub-model variables are
+/// flattened with value references assigned in a later pass that this simple counter
+/// does not track, so emitting an enum could give wrong numbers. All non-nested models
+/// (the common case) get the enum.
 pub struct ValueRefEnum<'a> {
     model: &'a Model,
-    model_variables: &'a schema::ModelVariables,
 }
 
 impl<'a> ValueRefEnum<'a> {
-    pub fn new(model: &'a Model, model_variables: &'a schema::ModelVariables) -> Self {
-        Self {
-            model,
-            model_variables,
-        }
+    pub fn new(model: &'a Model) -> Self {
+        Self { model }
     }
 }
 
 impl ToTokens for ValueRefEnum<'_> {
     fn to_tokens(&self, tokens: &mut TokenStream2) {
-        let struct_name = &self.model.ident;
-        let value_ref_enum_name = format_ident!("{}ValueRef", struct_name);
-
-        let mut value_ref_variants = Vec::new();
-        let mut from_u32_arms = Vec::new();
-        let mut into_u32_arms = Vec::new();
-
-        // Always add Time variant with VR 0 first
-        value_ref_variants.push(quote! {
-            Time = 0
-        });
-        from_u32_arms.push(quote! {
-            0 => Ok(#value_ref_enum_name::Time)
-        });
-        into_u32_arms.push(quote! {
-            #value_ref_enum_name::Time => 0
-        });
-
-        // Collect all variables from the model description and create a mapping
-        // from field name to value reference
-        let mut field_to_vr = std::collections::HashMap::new();
-
-        // Build mapping from the model description (source of truth)
-        for variable in self.model_variables.iter_abstract() {
-            let var_name = variable.name();
-            let vr = variable.value_reference();
-
-            // Skip VR 0 as it's reserved for Time
-            if vr == 0 {
-                continue;
-            }
-
-            // Try to match this variable to a field in the model
-            for field in &self.model.fields {
-                let field_name = field.ident.to_string();
-
-                // Check if this is the main field variable
-                if var_name == field_name {
-                    let has_variable = field
-                        .attrs
-                        .iter()
-                        .any(|attr| matches!(attr, FieldAttributeOuter::Variable(_)));
-                    if has_variable {
-                        field_to_vr.insert(field_name.clone(), vr);
-                    }
-                }
-            }
+        // Nested models: sub-model variables consume value references this counter does
+        // not track, so don't emit a (possibly wrong) enum for them.
+        let has_child = self
+            .model
+            .fields
+            .iter()
+            .any(|f| f.attrs.iter().any(|a| matches!(a, FieldAttributeOuter::Child(_))));
+        if has_child {
+            return;
         }
 
-        // Generate enum variants based on the model fields, using VRs from model description
-        for field in &self.model.fields {
-            let field_name = field.ident.to_string();
+        let struct_name = &self.model.ident;
+        let enum_name = format_ident!("{}ValueRef", struct_name);
 
-            // First, add the main field variable if it exists
-            let has_variable = field
+        let mut variants = vec![quote! { Time = 0 }];
+        let mut from_arms = vec![quote! { 0 => ::core::result::Result::Ok(#enum_name::Time) }];
+        let mut into_arms = vec![quote! { #enum_name::Time => 0 }];
+
+        // Same assignment as the metadata pass: each non-skipped `#[variable]` field, in
+        // declaration order, starting at 1 (0 is reserved for the independent `time`).
+        let mut vr: u32 = 1;
+        for field in &self.model.fields {
+            let is_variable = field
                 .attrs
                 .iter()
-                .any(|attr| matches!(attr, FieldAttributeOuter::Variable(_)));
-            if has_variable {
-                if let Some(&vr) = field_to_vr.get(&field_name) {
-                    let variant_name = format_ident!("{}", util::to_pascal_case(&field_name));
-
-                    value_ref_variants.push(quote! {
-                        #variant_name = #vr
-                    });
-
-                    from_u32_arms.push(quote! {
-                        #vr => Ok(#value_ref_enum_name::#variant_name)
-                    });
-
-                    into_u32_arms.push(quote! {
-                        #value_ref_enum_name::#variant_name => #vr
-                    });
-                }
+                .any(|a| matches!(a, FieldAttributeOuter::Variable(v) if !v.skip));
+            if !is_variable {
+                continue;
             }
+            let variant = util::generate_variant_name(&field.ident.to_string());
+            variants.push(quote! { #variant = #vr });
+            from_arms.push(quote! { #vr => ::core::result::Result::Ok(#enum_name::#variant) });
+            into_arms.push(quote! { #enum_name::#variant => #vr });
+            vr += 1;
         }
 
         tokens.extend(quote! {
+            /// Value references of this model's variables, by name (generated by the derive).
+            #[allow(dead_code)]
             #[repr(u32)]
             #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-            enum #value_ref_enum_name {
-                #(#value_ref_variants,)*
+            pub enum #enum_name {
+                #(#variants,)*
             }
 
-            impl std::fmt::Display for #value_ref_enum_name {
-                fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                    match self {
-                        Self::Time => write!(f, "Time"),
-                        _ => write!(f, "{:?}", self),
+            #[allow(dead_code)]
+            impl #enum_name {
+                /// The numeric FMI value reference of this variable.
+                pub fn vr(self) -> ::fmi::fmi3::binding::fmi3ValueReference {
+                    self as ::fmi::fmi3::binding::fmi3ValueReference
+                }
+            }
+
+            impl ::core::convert::TryFrom<::fmi::fmi3::binding::fmi3ValueReference> for #enum_name {
+                type Error = ::fmi::fmi3::Fmi3Error;
+                fn try_from(
+                    value: ::fmi::fmi3::binding::fmi3ValueReference,
+                ) -> ::core::result::Result<Self, Self::Error> {
+                    match value {
+                        #(#from_arms,)*
+                        _ => ::core::result::Result::Err(::fmi::fmi3::Fmi3Error::Error),
                     }
                 }
             }
 
-            impl TryFrom<fmi::fmi3::binding::fmi3ValueReference> for #value_ref_enum_name {
-                type Error = fmi::fmi3::Fmi3Error;
-
-                fn try_from(value: fmi::fmi3::binding::fmi3ValueReference) -> Result<Self, Self::Error> {
+            impl ::core::convert::From<#enum_name> for ::fmi::fmi3::binding::fmi3ValueReference {
+                fn from(value: #enum_name) -> Self {
                     match value {
-                        #(#from_u32_arms,)*
-                        _ => Err(fmi::fmi3::Fmi3Error::Error),
-                    }
-                }
-            }
-
-            impl From<#value_ref_enum_name> for fmi::fmi3::binding::fmi3ValueReference {
-                fn from(value: #value_ref_enum_name) -> Self {
-                    match value {
-                        #(#into_u32_arms,)*
+                        #(#into_arms,)*
                     }
                 }
             }

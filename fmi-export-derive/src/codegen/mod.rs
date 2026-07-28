@@ -9,6 +9,8 @@ mod model_get_set;
 mod model_get_set_states;
 mod model_impl;
 mod user_model_impl;
+mod util;
+mod value_ref;
 
 /// Main code generation structure
 pub struct CodeGenerator {
@@ -37,12 +39,23 @@ impl ToTokens for CodeGenerator {
             model_get_set_states::ModelGetSetStatesImpl::new(struct_name, &self.model);
         let user_model_impl = user_model_impl::UserModelImpl::new(struct_name, &self.model);
 
+        // `<StructName>ValueRef` enum: refer to variables by name instead of by a
+        // magic value-reference number tied to field order. Opt-in con
+        // `#[model(vr_enum = true)]` (por defecto no se genera).
+        let value_ref_enum = if self.model.generates_vr_enum() {
+            let e = value_ref::ValueRefEnum::new(&self.model);
+            quote! { #e }
+        } else {
+            quote! {}
+        };
+
         // Combine all implementations
         tokens.extend(quote! {
             #model_impl
             #user_model_impl
             #model_get_set_impl
             #model_get_set_states_impl
+            #value_ref_enum
         });
     }
 }

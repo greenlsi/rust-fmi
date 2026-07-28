@@ -50,6 +50,11 @@ pub struct StructAttr {
     /// Whether to auto-generate a UserModel impl (default: true)
     #[attribute(optional)]
     pub user_model: Option<bool>,
+
+    /// Whether to generate the `<StructName>ValueRef` enum (default: false).
+    /// Opt-in, like `co_simulation`: `#[model(vr_enum = true)]`.
+    #[attribute(optional)]
+    pub vr_enum: Option<bool>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -187,6 +192,13 @@ impl Model {
         self.get_model_attr()
             .and_then(|attr| attr.user_model)
             .unwrap_or(true)
+    }
+
+    /// Check if the `<StructName>ValueRef` enum should be generated (default: false).
+    pub fn generates_vr_enum(&self) -> bool {
+        self.get_model_attr()
+            .and_then(|attr| attr.vr_enum)
+            .unwrap_or(false)
     }
 }
 
@@ -458,6 +470,24 @@ fn parse_model_attr_bool(attr: syn::Attribute) -> Result<StructAttr, String> {
             syn::Meta::List(list) if list.path.is_ident("user_model") => {
                 let _ = list;
                 return Err("user_model expects a boolean value, e.g. user_model = false".into());
+            }
+            syn::Meta::NameValue(nv) if nv.path.is_ident("vr_enum") => {
+                if let syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Bool(lit_bool),
+                    ..
+                }) = nv.value
+                {
+                    model_attr.vr_enum = Some(lit_bool.value);
+                } else {
+                    return Err("vr_enum expects a boolean".into());
+                }
+            }
+            syn::Meta::Path(path) if path.is_ident("vr_enum") => {
+                return Err("vr_enum expects a boolean value, e.g. vr_enum = true".into());
+            }
+            syn::Meta::List(list) if list.path.is_ident("vr_enum") => {
+                let _ = list;
+                return Err("vr_enum expects a boolean value, e.g. vr_enum = true".into());
             }
             // Ignore unknown entries here and let the main parser report errors elsewhere
             _ => {}
