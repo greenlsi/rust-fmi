@@ -1,0 +1,15 @@
+[package]
+name = "xdevs_fmi"
+version = "0.1.0"
+edition = "2021"
+description = "Adaptador genérico: conduce cualquier modelo xdevs (atómico o acoplado) desde marcas de tiempo absolutas, para envolverlo como FMU FMI 3.0 Scheduled Execution"
+# xdevs-no-std es GPL-3.0-or-later y este crate enlaza con él.
+license = "GPL-3.0-or-later"
+
+[dependencies]
+xdevs-no-std = { git = "https://github.com/iscar-ucm/xdevs_no_std.rs.git", branch = "duration", features = [
+    "std",
+] }
+# La macro #[atomic2fmu] se re-exporta desde aquí para que el usuario escriba
+# `#[xdevs_fmi::atomic2fmu(...)]`.
+xdevs_fmi_macros = { path = "../xdevs_fmi_macros" }

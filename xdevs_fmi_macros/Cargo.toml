@@ -1,0 +1,16 @@
+[package]
+name = "xdevs_fmi_macros"
+version = "0.1.0"
+edition = "2021"
+description = "Macro #[atomic2fmu] que genera el wrapper FMI de un modelo DEVS atómico de xdevs"
+license = "GPL-3.0-or-later"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2", features = ["full"] }
+quote = "1"
+proc-macro2 = "1"
+# Para volcar el código generado, ya formateado y legible, a un archivo.
+prettyplease = "0.2"

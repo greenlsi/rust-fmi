@@ -10,6 +10,8 @@ members = [
     "fmi-sim",
     "fmi-sys",
     "fmi-test-data",
+    "xdevs_fmi",
+    "xdevs_fmi_macros",
 ]
 resolver = "2"
 

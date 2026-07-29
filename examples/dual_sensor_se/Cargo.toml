@@ -1,0 +1,18 @@
+[package]
+name = "dual_sensor_se"
+version = "0.1.0"
+edition = "2021"
+description = "Demo de #[atomic2fmu] con un modelo DEVS de 2 entradas y 2 salidas (structs de puertos, como los de xdevs)"
+license = "GPL-3.0-or-later"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+fmi = { workspace = true, features = ["fmi3"] }
+fmi-export = { workspace = true, features = ["fmi3"] }
+xdevs_fmi = { path = "../../xdevs_fmi" }
+xdevs-no-std = { git = "https://github.com/iscar-ucm/xdevs_no_std.rs.git", branch = "duration", features = ["std"] }
+
+[package.metadata.fmu]
+default_experiment = { start_time = "0", stop_time = "100", step_size = "0.5" }
