@@ -86,6 +86,20 @@ pub use xdevs::{Atomic as AtomicModel, Component, Duration, Port};
 /// `start = ...` opcional.
 pub use xdevs_fmi_macros::atomic2fmu;
 
+/// **La macro `#[coupled2fmu(...)]`**: como [`atomic2fmu`], pero para modelos DEVS
+/// **acoplados** (`impl xdevs::Coupled`, normalmente con `#[xdevs::coupled]`). Conduce el
+/// modelo con un [`Coordinator`] (`DevsFmu::coupled`) en vez de un [`Simulator`]. Los
+/// puertos externos del acoplado (su `type Input`/`type Output`) se exponen igual que en
+/// un átomo (N entradas / M salidas, con `Port`, tupla, array o struct de puertos).
+///
+/// ```ignore
+/// #[xdevs_fmi::coupled2fmu(init = PwmDuty::build(PwmGenerator::new(...), DutyCycleCalculator::new(...)))]
+/// mod pwm_duty_fmu {
+///     // ...el modelo acoplado (#[xdevs::coupled] + impl Component + impl Coupled) y sus componentes...
+/// }
+/// ```
+pub use xdevs_fmi_macros::coupled2fmu;
+
 /// Intervalo que se reporta cuando el modelo queda **pasivo** (`ta() = ∞`).
 ///
 /// FMI no tiene forma de decir "infinito" en un reloj countdown, así que se devuelve

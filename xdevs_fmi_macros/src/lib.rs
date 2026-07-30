@@ -62,6 +62,44 @@ struct PortInfo {
     base_name: String,
 }
 
+/// Átomo (`DevsFmu::atomic`, `Simulator`) o acoplado (`DevsFmu::coupled`, `Coordinator`).
+#[derive(Clone, Copy, PartialEq)]
+enum SimKind {
+    Atomic,
+    Coupled,
+}
+
+impl SimKind {
+    /// El tipo del simulador que envuelve al modelo.
+    fn sim_ty(&self, model: &Type) -> TokenStream2 {
+        match self {
+            SimKind::Atomic => quote! { ::xdevs_fmi::Simulator<#model> },
+            SimKind::Coupled => quote! { ::xdevs_fmi::Coordinator<#model> },
+        }
+    }
+    /// El constructor de `DevsFmu` (`atomic` / `coupled`).
+    fn ctor(&self) -> Ident {
+        match self {
+            SimKind::Atomic => format_ident!("atomic"),
+            SimKind::Coupled => format_ident!("coupled"),
+        }
+    }
+    /// El trait DEVS que el modelo debe implementar.
+    fn trait_name(&self) -> &'static str {
+        match self {
+            SimKind::Atomic => "Atomic",
+            SimKind::Coupled => "Coupled",
+        }
+    }
+    /// El `type Kind` que debe declarar el `impl Component` del modelo.
+    fn kind_ty_name(&self) -> &'static str {
+        match self {
+            SimKind::Atomic => "AtomicKind",
+            SimKind::Coupled => "CoupledKind",
+        }
+    }
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // Especificación normalizada (de aquí sale el código)
 // ═════════════════════════════════════════════════════════════════════════════
@@ -95,6 +133,7 @@ struct SpecTaOut {
 struct Spec {
     name: Ident,
     vis: Visibility,
+    kind: SimKind,
     model_init: Expr,
     model_ty: Type,
     in_ports: Vec<InPort>,
@@ -107,6 +146,7 @@ fn gen(spec: &Spec) -> TokenStream2 {
     let Spec {
         name,
         vis,
+        kind,
         model_init,
         model_ty,
         in_ports,
@@ -114,6 +154,8 @@ fn gen(spec: &Spec) -> TokenStream2 {
         ta_outputs,
     } = spec;
     let vref = format_ident!("{}ValueRef", name);
+    let sim_ty = kind.sim_ty(model_ty);
+    let ctor = kind.ctor();
 
     let mut struct_fields = Vec::new();
     let mut default_fields = Vec::new();
@@ -175,9 +217,9 @@ fn gen(spec: &Spec) -> TokenStream2 {
     }
 
     struct_fields.push(quote! {
-        sim: ::xdevs_fmi::DevsFmu<::xdevs_fmi::Simulator<#model_ty>>
+        sim: ::xdevs_fmi::DevsFmu<#sim_ty>
     });
-    default_fields.push(quote! { sim: ::xdevs_fmi::DevsFmu::atomic(#model_init) });
+    default_fields.push(quote! { sim: ::xdevs_fmi::DevsFmu::#ctor(#model_init) });
 
     // ── Bloque de captura de salidas: lee cada puerto de salida y aplica sus vars ──
     let capture = |fill: TokenStream2| -> TokenStream2 {
@@ -339,18 +381,31 @@ impl Parse for MacroArgs {
 // Punto de entrada: detecta si es un módulo o un struct
 // ═════════════════════════════════════════════════════════════════════════════
 
+/// Genera el wrapper FMI de un modelo DEVS **atómico** (`impl xdevs::Atomic`).
 #[proc_macro_attribute]
 pub fn atomic2fmu(args: TokenStream, item: TokenStream) -> TokenStream {
-    let args = syn::parse_macro_input!(args as MacroArgs);
+    dispatch(args, item, SimKind::Atomic)
+}
 
+/// Genera el wrapper FMI de un modelo DEVS **acoplado** (`impl xdevs::Coupled`,
+/// normalmente con `#[xdevs::coupled]`). Igual que `atomic2fmu` pero conduce el modelo
+/// con un `Coordinator` (`DevsFmu::coupled`); los puertos externos (Input/Output del
+/// acoplado) se exponen igual que en un átomo.
+#[proc_macro_attribute]
+pub fn coupled2fmu(args: TokenStream, item: TokenStream) -> TokenStream {
+    dispatch(args, item, SimKind::Coupled)
+}
+
+fn dispatch(args: TokenStream, item: TokenStream, kind: SimKind) -> TokenStream {
+    let args = syn::parse_macro_input!(args as MacroArgs);
     if let Ok(item_mod) = syn::parse::<ItemMod>(item.clone()) {
-        return match expand_mod(args, item_mod) {
+        return match expand_mod(args, item_mod, kind) {
             Ok(ts) => ts.into(),
             Err(e) => e.to_compile_error().into(),
         };
     }
     let item_struct = syn::parse_macro_input!(item as ItemStruct);
-    match expand_struct(args, item_struct) {
+    match expand_struct(args, item_struct, kind) {
         Ok(ts) => ts.into(),
         Err(e) => e.to_compile_error().into(),
     }
@@ -360,7 +415,7 @@ pub fn atomic2fmu(args: TokenStream, item: TokenStream) -> TokenStream {
 // Forma MÓDULO: lee el modelo del propio módulo (N puertos)
 // ═════════════════════════════════════════════════════════════════════════════
 
-fn expand_mod(args: MacroArgs, mut item: ItemMod) -> syn::Result<TokenStream2> {
+fn expand_mod(args: MacroArgs, mut item: ItemMod, kind: SimKind) -> syn::Result<TokenStream2> {
     let Some((_brace, items)) = &mut item.content else {
         return Err(syn::Error::new_spanned(
             &item,
@@ -368,19 +423,27 @@ fn expand_mod(args: MacroArgs, mut item: ItemMod) -> syn::Result<TokenStream2> {
         ));
     };
 
-    let (model_ty, input_ty, output_ty) = find_component(items).ok_or_else(|| {
+    let (model_ty, input_ty, output_ty) = find_component(items, kind).ok_or_else(|| {
+        let k = kind.kind_ty_name();
         syn::Error::new_spanned(
             &item.ident,
-            "#[atomic2fmu]: no se encontró `impl xdevs::Component for <Modelo>` dentro del \
-             módulo (el modelo DEVS entero debe estar DENTRO del `mod`).",
+            format!(
+                "no se encontró `impl xdevs::Component for <Modelo>` con `type Kind = xdevs::{k}` \
+                 dentro del módulo (el modelo DEVS entero debe estar DENTRO del `mod`).",
+            ),
         )
     })?;
 
-    if !has_impl_named(items, "Atomic") {
+    // El modelo debe implementar el trait DEVS del tipo (Atomic o Coupled).
+    let want = kind.trait_name();
+    if !has_impl_named(items, want) {
+        let (macro_name, other) = match kind {
+            SimKind::Atomic => ("atomic2fmu", "un acoplado (`impl Coupled`) pediría `coupled2fmu`"),
+            SimKind::Coupled => ("coupled2fmu", "un átomo (`impl Atomic`) usa `atomic2fmu`"),
+        };
         return Err(syn::Error::new_spanned(
             &item.ident,
-            "#[atomic2fmu]: el modelo debe implementar `xdevs::Atomic` (esta macro es para \
-             modelos ATÓMICOS; un acoplado pediría un `coupled2fmu`).",
+            format!("#[{macro_name}]: el modelo debe implementar `xdevs::{want}` — {other}."),
         ));
     }
 
@@ -461,6 +524,7 @@ fn expand_mod(args: MacroArgs, mut item: ItemMod) -> syn::Result<TokenStream2> {
     let spec = Spec {
         name: format_ident!("{}Fmu", model_ident),
         vis: syn::parse_quote!(pub),
+        kind,
         model_init: init,
         model_ty,
         in_ports,
@@ -574,8 +638,11 @@ fn extract_ports(ty: &Type, items: &[Item], prefix: &str) -> syn::Result<Vec<Por
     }
 }
 
-/// Busca `impl ... Component for T` y devuelve (T, Input, Output).
-fn find_component(items: &[Item]) -> Option<(Type, Type, Type)> {
+/// Busca el `impl ... Component for T` cuyo `type Kind` coincide con `kind` (para que en
+/// un módulo con varios componentes se elija el modelo correcto: el acoplado para
+/// `coupled2fmu`, el átomo para `atomic2fmu`). Devuelve (T, Input, Output).
+fn find_component(items: &[Item], kind: SimKind) -> Option<(Type, Type, Type)> {
+    let want = kind.kind_ty_name();
     for item in items {
         let Item::Impl(imp) = item else { continue };
         let Some((_, trait_path, _)) = &imp.trait_ else { continue };
@@ -589,16 +656,23 @@ fn find_component(items: &[Item]) -> Option<(Type, Type, Type)> {
         }
         let mut input = None;
         let mut output = None;
+        let mut kind_ty = None;
         for ii in &imp.items {
             if let syn::ImplItem::Type(t) = ii {
-                if t.ident == "Input" {
-                    input = Some(t.ty.clone());
-                } else if t.ident == "Output" {
-                    output = Some(t.ty.clone());
+                match () {
+                    _ if t.ident == "Input" => input = Some(t.ty.clone()),
+                    _ if t.ident == "Output" => output = Some(t.ty.clone()),
+                    _ if t.ident == "Kind" => kind_ty = Some(t.ty.clone()),
+                    _ => {}
                 }
             }
         }
-        return Some(((*imp.self_ty).clone(), input?, output?));
+        // Debe declarar el Kind esperado (AtomicKind / CoupledKind).
+        let matches_kind = matches!(&kind_ty, Some(Type::Path(p))
+            if p.path.segments.last().map(|s| s.ident == want).unwrap_or(false));
+        if matches_kind {
+            return Some(((*imp.self_ty).clone(), input?, output?));
+        }
     }
     None
 }
@@ -653,7 +727,7 @@ fn find_enum_variants(items: &[Item], data_ty: &Type) -> Option<Vec<Ident>> {
 // (de momento: un puerto de entrada y uno de salida)
 // ═════════════════════════════════════════════════════════════════════════════
 
-fn expand_struct(args: MacroArgs, item: ItemStruct) -> syn::Result<TokenStream2> {
+fn expand_struct(args: MacroArgs, item: ItemStruct, kind: SimKind) -> syn::Result<TokenStream2> {
     let model_path = args
         .model
         .ok_or_else(|| syn::Error::new(Span::call_site(), "falta `model = <Tipo>` (forma struct)"))?;
@@ -730,6 +804,7 @@ fn expand_struct(args: MacroArgs, item: ItemStruct) -> syn::Result<TokenStream2>
     let spec = Spec {
         name: item.ident.clone(),
         vis: item.vis.clone(),
+        kind,
         model_init: init,
         model_ty,
         in_ports,

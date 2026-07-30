@@ -95,8 +95,16 @@ Output` y se adapta a la forma que sea:
 | struct con `#[derive(xdevs::Bag)]` | 1 por campo, acceso `.campo` |
 
 Ejemplos: `semaforo_mod_se` (1 in / 1 out enum→one-hot), `dual_sensor_se` (**2 in / 2
-out** con structs de puertos). Los modelos **acoplados** quedan fuera (sería un
-`coupled2fmu`).
+out** con structs de puertos).
+
+## Modelos acoplados: `#[coupled2fmu]`
+
+La macro hermana `#[coupled2fmu]` envuelve un modelo **acoplado** (`impl xdevs::Coupled`,
+normalmente con `#[xdevs::coupled]`). Es idéntica salvo que conduce el modelo con un
+`Coordinator` (`DevsFmu::coupled`) y comprueba `impl Coupled`. Los puertos externos del
+acoplado se exponen igual (N/M). Ejemplo: `pwm_duty_coupled_se` — un generador PWM
+acoplado a un medidor de duty, todo dentro de una sola FMU (salida `output` = el duty
+medido). La red interna del acoplado se resuelve dentro de la FMU.
 
 ## Licencia
 

@@ -1,0 +1,18 @@
+[package]
+name = "cadena_coupled_se"
+version = "0.1.0"
+edition = "2021"
+description = "Demo autocontenida de #[coupled2fmu]: emisor -> contador acoplados como una sola FMU FMI 3.0 SE"
+license = "GPL-3.0-or-later"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+fmi = { workspace = true, features = ["fmi3"] }
+fmi-export = { workspace = true, features = ["fmi3"] }
+xdevs_fmi = { path = "../../xdevs_fmi" }
+xdevs-no-std = { git = "https://github.com/iscar-ucm/xdevs_no_std.rs.git", branch = "duration", features = ["std"] }
+
+[package.metadata.fmu]
+default_experiment = { start_time = "0", stop_time = "60", step_size = "0.5" }
